@@ -60,7 +60,7 @@ def roll(server, user, password, database, table, start_part, end_part, incremen
 def roll_time_check(rolldate, increment):
     f = '%Y-%m-%d %H:%M:%S'
     now = datetime.datetime.now()
-    current_date_delta = (datetime.datetime.strptime(rolldate, f)) - now)
+    current_date_delta = (datetime.datetime.strptime(rolldate, f) - now)
 
     if increment is "h":
         increment_delta = datetime.timedelta(hours=1)
