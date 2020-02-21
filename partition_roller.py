@@ -1,52 +1,55 @@
-import mysql.connector
+import mysql.connector 
 from mysql.connector import errorcode
 import datetime
 
-timeFormat = '%Y-%m-%d %H:%M:%S'
-stampFormat = '%Y%m%d%H%M%S'
-dateFormat = '%Y-%m-%d'
+time_format = '%Y-%m-%d %H:%M:%S'
+stamp_format = '%Y%m%d%H%M%S'
+date_format = '%Y-%m-%d'
 
-def roll(server, user, password, database, table, start_part, end_part, increment):
-    #actual read partition_schema table, create query for drop/add partitions(CREATE_TIME var under INFORMATION_SCHEMA PARTITIONS where  ), execute on cursor
-    #conx = mysql.connnector.connect(user=user, password=password, host=server, database=information_schema)
-    #conxcursor = conx.cursor()
-    #partQuery = ("select a.TABLE_SCHEMA,a.TABLE_NAME,b.PARTITION_NAME first_part,c.PARTITION_NAME las_part, b.PARTITION_ORDINAL_POSITION, c.PARTITION_ORDINAL_POSITION from (select TABLE_SCHEMA,TABLE_NAME,min(PARTITION_ORDINAL_POSITION) min_part,max(PARTITION_ORDINAL_POSITION) max_part from information_schema.`PARTITIONS` where PARTITION_ORDINAL_POSITION is not NULL group by TABLE_SCHEMA,TABLE_NAME) a, (select TABLE_SCHEMA,TABLE_NAME,PARTITION_NAME,PARTITION_ORDINAL_POSITION from information_schema.`PARTITIONS`) b, (select TABLE_SCHEMA,TABLE_NAME,PARTITION_NAME,PARTITION_ORDINAL_POSITION from information_schema.`PARTITIONS`) c where a.TABLE_SCHEMA=b.TABLE_SCHEMA and a.TABLE_NAME=b.TABLE_NAME and a.min_part=b.PARTITION_ORDINAL_POSITION and a.TABLE_SCHEMA=c.TABLE_SCHEMA and a.TABLE_NAME=c.TABLE_NAME and a.max_part=c.PARTITION_ORDINAL_POSITION")
-    #conxcursor.execute(partQuery)
-    #partitions = conxcursor.fetchall
-    #conxcursor.close()
-    #conx.close()
-    add_part = ("ALTER TABLE %s ADD PARTITION (PARTITION %s VALUES GREATER THAN (%s))") #naming scheme
-    drop_part = ("ALTER TABLE %s DROP PARTITION %s")
+def print_error(e):
+    print ("SQLSTATE value:", e.sqlstate) # SQLSTATE value
+    print ("Error code:", e.errno)        # error number
+    print ("Error message:", e.msg )      # error message
+    print ("Error:", e)                   # errno, sqlstate, msg values
+    s = str(e)
+    print ("Error:", s)
+    return
 
-    try:    
-        conx = mysql.connnector.connect(user=user, password=password, host=server, database=database, table=table)
-        conxcursor = conx.cursor()
-
-        if increment in ('d', 'w', 'm', 'y'):
-            timeIncrement = 'CURRENT_DATE()'
-        elif increment in ('h'):
-            timeIncrement = 'CURRENT_TIMESTAMP()'
+def roll(server_ip, user, password, db, db_table, start_part, end_part, increment):
+    try:
+        print(f"conx {server_ip} attempting")
+        conx = mysql.connector.connect(user=user, password=password, host=server_ip, database=db)
+    except mysql.connector.Error as err:
+        if err.errno == errorcode.ER_ACCESS_DENIED_ERROR:
+            print("Something is wrong with your user name or password")
+        elif err.errno == errorcode.ER_BAD_DB_ERROR:
+            print("Database does not exist")
         else:
-            raise NameError('Time Increments must be: h, d, w, m, or y')
-
+            print(err)
+    try:   
+        print(f"conx {server_ip} established")
+        conxcursor = conx.cursor()
         try:
-            conxcursor.execute(add_part, table, ('p' + datetime.datetime.now().strftime(stampFormat)), timeIncrement) #check with shaakir - needs timeIncrement 
-            conx.commit()            
-            conxcursor.execute(drop_part, table, start_part)
-            conx.commit()
-            partQuery = ("select a.TABLE_SCHEMA,a.TABLE_NAME,b.PARTITION_NAME first_part,c.PARTITION_NAME las_part, b.PARTITION_ORDINAL_POSITION, c.PARTITION_ORDINAL_POSITION from (select TABLE_SCHEMA,TABLE_NAME,min(PARTITION_ORDINAL_POSITION) min_part,max(PARTITION_ORDINAL_POSITION) max_part from information_schema.`PARTITIONS` where PARTITION_ORDINAL_POSITION is not NULL group by TABLE_SCHEMA,TABLE_NAME) a, (select TABLE_SCHEMA,TABLE_NAME,PARTITION_NAME,PARTITION_ORDINAL_POSITION from information_schema.`PARTITIONS`) b, (select TABLE_SCHEMA,TABLE_NAME,PARTITION_NAME,PARTITION_ORDINAL_POSITION from information_schema.`PARTITIONS`) c where a.TABLE_SCHEMA=b.TABLE_SCHEMA and a.TABLE_NAME=b.TABLE_NAME and a.min_part=b.PARTITION_ORDINAL_POSITION and a.TABLE_SCHEMA=c.TABLE_SCHEMA and a.TABLE_NAME=c.TABLE_NAME and a.max_part=c.PARTITION_ORDINAL_POSITION and a.TABLE_NAME = '%s' and a.TABLE_SCHEMA = '%s'")
-            conxcursor.execute(partQuery, table, database) #query that selects oldest and newest partition
+            stamp = (str(int(datetime.datetime.utcnow().timestamp())))
+            conxcursor.execute(f"select a.TABLE_SCHEMA,a.TABLE_NAME,b.PARTITION_NAME first_part,c.PARTITION_NAME las_part, b.PARTITION_ORDINAL_POSITION, c.PARTITION_ORDINAL_POSITION from (select TABLE_SCHEMA,TABLE_NAME,min(PARTITION_ORDINAL_POSITION) min_part,max(PARTITION_ORDINAL_POSITION) max_part from information_schema.`PARTITIONS` where PARTITION_ORDINAL_POSITION is not NULL group by TABLE_SCHEMA,TABLE_NAME) a, (select TABLE_SCHEMA,TABLE_NAME,PARTITION_NAME,PARTITION_ORDINAL_POSITION from information_schema.`PARTITIONS`) b, (select TABLE_SCHEMA,TABLE_NAME,PARTITION_NAME,PARTITION_ORDINAL_POSITION from information_schema.`PARTITIONS`) c where a.TABLE_SCHEMA=b.TABLE_SCHEMA and a.TABLE_NAME=b.TABLE_NAME and a.min_part=b.PARTITION_ORDINAL_POSITION and a.TABLE_SCHEMA=c.TABLE_SCHEMA and a.TABLE_NAME=c.TABLE_NAME and a.max_part=c.PARTITION_ORDINAL_POSITION and a.TABLE_NAME = '{db_table}' and a.TABLE_SCHEMA = '{db}'") #query that selects oldest and newest partition
             data = conxcursor.fetchall()
+            print(data)     
+            conxcursor.execute(f"ALTER TABLE {db_table} ADD PARTITION (PARTITION p{stamp} VALUES LESS THAN ({stamp}))") #check with shaakir - needs time_increment 
+            conx.commit()
+            print("partition added")
+            conxcursor.execute(f"ALTER TABLE {db_table} DROP PARTITION {start_part}")
+            conx.commit()
+            print("partition removed")
+            conxcursor.execute(f"select a.TABLE_SCHEMA,a.TABLE_NAME,b.PARTITION_NAME first_part,c.PARTITION_NAME las_part, b.PARTITION_ORDINAL_POSITION, c.PARTITION_ORDINAL_POSITION from (select TABLE_SCHEMA,TABLE_NAME,min(PARTITION_ORDINAL_POSITION) min_part,max(PARTITION_ORDINAL_POSITION) max_part from information_schema.`PARTITIONS` where PARTITION_ORDINAL_POSITION is not NULL group by TABLE_SCHEMA,TABLE_NAME) a, (select TABLE_SCHEMA,TABLE_NAME,PARTITION_NAME,PARTITION_ORDINAL_POSITION from information_schema.`PARTITIONS`) b, (select TABLE_SCHEMA,TABLE_NAME,PARTITION_NAME,PARTITION_ORDINAL_POSITION from information_schema.`PARTITIONS`) c where a.TABLE_SCHEMA=b.TABLE_SCHEMA and a.TABLE_NAME=b.TABLE_NAME and a.min_part=b.PARTITION_ORDINAL_POSITION and a.TABLE_SCHEMA=c.TABLE_SCHEMA and a.TABLE_NAME=c.TABLE_NAME and a.max_part=c.PARTITION_ORDINAL_POSITION and a.TABLE_NAME = '{db_table}' and a.TABLE_SCHEMA = '{db}'") #query that selects oldest and newest partition
+            data = conxcursor.fetchall()
+            print(data)
             conx.close()
-            
+            return data
+        
         except mysql.connector.Error as e:
-            print ("Error code:", e.errno)        # error number
-            print ("SQLSTATE value:", e.sqlstate) # SQLSTATE value
-            print ("Error message:", e.msg )      # error message
-            print ("Error:", e)                   # errno, sqlstate, msg values
-            s = str(e)
-            print ("Error:", s)                   # errno, sqlstate, msg values
-            
+            print_error(e)
+            return False
+        
     except mysql.connector.Error as err:
         if err.errno == errorcode.ER_ACCESS_DENIED_ERROR:
             print("Something is wrong with your user name or password")
@@ -55,12 +58,42 @@ def roll(server, user, password, database, table, start_part, end_part, incremen
         else:
             print(err)
 
-    return data
+def update_partitions(server_ip, user, password, db, db_table, id):
+    try:
+        cnx_sub = mysql.connector.connect(user=user, password=password, host=server_ip, database=db)
+        cnx_sub_cursor = cnx_sub.cursor()
+        cnx_sub_cursor.execute(f"SELECT a.TABLE_SCHEMA,a.TABLE_NAME,b.PARTITION_NAME first_part,c.PARTITION_NAME las_part, b.PARTITION_ORDINAL_POSITION, c.PARTITION_ORDINAL_POSITION from (select TABLE_SCHEMA,TABLE_NAME,min(PARTITION_ORDINAL_POSITION) min_part,max(PARTITION_ORDINAL_POSITION) max_part from information_schema.`PARTITIONS` where PARTITION_ORDINAL_POSITION is not NULL group by TABLE_SCHEMA,TABLE_NAME) a, (select TABLE_SCHEMA,TABLE_NAME,PARTITION_NAME,PARTITION_ORDINAL_POSITION from information_schema.`PARTITIONS`) b, (select TABLE_SCHEMA,TABLE_NAME,PARTITION_NAME,PARTITION_ORDINAL_POSITION from information_schema.`PARTITIONS`) c where a.TABLE_SCHEMA=b.TABLE_SCHEMA and a.TABLE_NAME=b.TABLE_NAME and a.min_part=b.PARTITION_ORDINAL_POSITION and a.TABLE_SCHEMA=c.TABLE_SCHEMA and a.TABLE_NAME=c.TABLE_NAME and a.max_part=c.PARTITION_ORDINAL_POSITION and a.TABLE_NAME = '{db_table}' and a.TABLE_SCHEMA = '{db}'")
+        data = cnx_sub_cursor.fetchall()
+        cnx_sub_cursor.execute(f"UPDATE partition_roller SET start_part = '{data[0][2]}', end_part= '{data[0][3]}' WHERE ID={servid}")
+        cnx_sub_cursor.commit()
+        cnx_sub.close()
+        return True
+    
+    except mysql.connector.Error as e:
+        print_error(e)
+        cnx_sub.close()
+        return False
+
+def update_table(server_ip, user, password, db, db_table, id):
+    try:
+        cnx_sub = mysql.connector.connect(user=user, password=password, host=server_ip, database=db)
+        cnx_sub_cursor = cnx_sub.cursor()
+        cnx_sub_cursor.execute(f"select a.TABLE_SCHEMA,a.TABLE_NAME,b.PARTITION_NAME first_part,c.PARTITION_NAME las_part from (select TABLE_SCHEMA,TABLE_NAME,min(PARTITION_ORDINAL_POSITION) min_part,max(PARTITION_ORDINAL_POSITION) max_part from information_schema.`PARTITIONS` where PARTITION_ORDINAL_POSITION is not NULL group by TABLE_SCHEMA,TABLE_NAME) a, (select TABLE_SCHEMA,TABLE_NAME,PARTITION_NAME,PARTITION_ORDINAL_POSITION from information_schema.`PARTITIONS`) b, (select TABLE_SCHEMA,TABLE_NAME,PARTITION_NAME,PARTITION_ORDINAL_POSITION from information_schema.`PARTITIONS`) c where a.TABLE_SCHEMA=b.TABLE_SCHEMA and a.TABLE_NAME=b.TABLE_NAME and a.min_part=b.PARTITION_ORDINAL_POSITION and a.TABLE_SCHEMA=c.TABLE_SCHEMA and a.TABLE_NAME=c.TABLE_NAME and a.max_part=c.PARTITION_ORDINAL_POSITION")
+        data = cnx_sub_cursor.fetchall()
         
-def roll_time_check(rolldate, increment):
-    f = '%Y-%m-%d %H:%M:%S'
-    now = datetime.datetime.now()
-    current_date_delta = (datetime.datetime.strptime(rolldate, f) - now)
+        cnx_sub_cursor.execute(f"UPDATE partition_roller SET start_part = '{data[0][2]}', end_part= '{data[0][3]}' WHERE ID={servid}")
+        cnx_sub_cursor.commit()
+        cnx_sub.close()
+        return True
+    
+    except mysql.connector.Error as e:
+        print_error(e)
+        cnx_sub.close()
+        return False
+
+def roll_time_check(roll_date, increment):
+    now = datetime.datetime.utcnow()
+    current_date_delta = now - roll_date
 
     if increment is "h":
         increment_delta = datetime.timedelta(hours=1)
@@ -72,31 +105,42 @@ def roll_time_check(rolldate, increment):
         increment_delta = datetime.timedelta(days=30.417)
     elif increment is "y":
         increment_delta = datetime.timedelta(days=365)
-        
-    return current_date_delta >= increment_delta
+
+    return (current_date_delta >= increment_delta)
     
 
 if __name__ == "__main__":
     try:
-        cnx = mysql.connector.connect(user='', password='', host='', database='')
+        cnx = mysql.connector.connect(user='dbadmin', password='dat@s3rvices!', host='127.0.0.1', database='db_test') #Host Database Information - defaults to localhost for server and 3306 for port.
         cursor = cnx.cursor()
         
         #query vars and put in cursor then list of tuples
-        query = ("SELECT serverIP, user, password, database, table, rolldate, start_part, end_part, increment, is_active FROM PartitionRoller WHERE is_active = 1")
+        query = ("SELECT server_ip, user, password, db, db_table, roll_date, start_part, end_part, increment, active, id FROM partition_roller WHERE active = 1")
         cursor.execute(query)
         servers = cursor.fetchall()
         
-        for server, user, password, database, table, rolldate, start_part, end_part, increment, is_active in servers: #loop through server IPs and check if they need to be partition rolled
-
-            if roll_time_check(rolldate, increment): # use sql timestampdiff and compare timestamps 
+        for server_ip, user, password, db, db_table, roll_date, start_part, end_part, increment, active, servid in servers: #loop through server IPs and check if they need to be partition roller
+            try: 
+                update_partitions(server_ip, user, password, db, db_table, id)
+            except:
+                print(f"Unable to update First and Last Partition of {server_ip}, now exiting.")
+                quit()
+                
+            if (roll_time_check(roll_date, increment) == True): # use sql timestampdiff and compare timestamps 
                 try:
-                    updatedata = roll(server, user, password, database, table, start_part, end_part, increment)
-                finally:
-                    update = ("UPDATE %s SET rolldate = CURRENT_TIMESTAMP(), start_part = %s, end_part= %s  WHERE server = %s")   
-                    cursor.execute(update, table, updatedata[2], updatedata[3], server)
-                    cnx.commit()
-            else:
-                print(server + " does not need to be rolled yet.\n")
+                    updatedata = roll(server_ip, user, password, db, db_table, start_part, end_part, increment)
+                    if updatedata != False:
+                        try:
+                            cursor.execute(f"UPDATE partition_roller SET roll_date = CURRENT_TIMESTAMP(), start_part = '{updatedata[0][2]}', end_part= '{updatedata[0][3]}' WHERE ID={servid}")
+                            cnx.commit()
+                        except mysql.connector.Error as e:
+                            print_error(e)
+                    else: 
+                        print(f"Error rolling 1 {server_ip}")
+                except mysql.connector.Error as e:
+                    print_error(e)
+            else: 
+                print(server_ip + " does not need to be rolled yet.\n")
                                 
     except mysql.connector.Error as err:
         if err.errno == errorcode.ER_ACCESS_DENIED_ERROR:
